@@ -422,6 +422,7 @@ struct Parameter {
 
 typedef std::map<std::string, Parameter> ParameterMap;
 typedef std::map<std::string, Value> ExtensionMap;
+typedef std::map<std::string, int> glTF1Map;
 
 struct AnimationChannel {
   int sampler;              // required
@@ -551,6 +552,7 @@ struct Material {
 
 struct BufferView {
   std::string name;
+  std::string bName;
   int buffer;         // Required
   size_t byteOffset;  // minimum 0, default 0
   size_t byteLength;  // required, minimum 1
@@ -567,6 +569,7 @@ struct BufferView {
 struct Accessor {
   int bufferView;  // optional in spec but required here since sparse accessor
                    // are not supported
+  std::string bvName; // glTF1 support
   std::string name;
   size_t byteOffset;
   bool normalized;    // optional.
@@ -800,19 +803,47 @@ class Model {
   bool operator==(const Model &) const;
 
   std::vector<Accessor> accessors;
+  glTF1Map accessors1;
+
   std::vector<Animation> animations;
+  glTF1Map animations1;
+
   std::vector<Buffer> buffers;
+  glTF1Map buffers1;
+
   std::vector<BufferView> bufferViews;
+  glTF1Map bufferViews1;
+
   std::vector<Material> materials;
+  glTF1Map materials1;
+
   std::vector<Mesh> meshes;
+  glTF1Map meshes1;
+
   std::vector<Node> nodes;
+  glTF1Map nodes1;
+
   std::vector<Texture> textures;
+  glTF1Map textures1;
+
   std::vector<Image> images;
+  glTF1Map images1;
+
   std::vector<Skin> skins;
+  glTF1Map skins1;
+
   std::vector<Sampler> samplers;
+  glTF1Map samplers1;
+
   std::vector<Camera> cameras;
+  glTF1Map cameras1;
+
   std::vector<Scene> scenes;
+  glTF1Map scenes1;
+
   std::vector<Light> lights;
+  glTF1Map lights1;
+
   ExtensionMap extensions;
 
   int defaultScene;
@@ -2443,6 +2474,57 @@ static bool ParseStringIntProperty(std::map<std::string, int> *ret,
   return true;
 }
 
+static bool ParseStringMapProperty(std::map<std::string, std::string> *ret,
+                                   std::string *err, const json &o,
+                                   const std::string &property, bool required,
+                                   const std::string &parent = "") {
+  json::const_iterator it = o.find(property);
+  if (it == o.end()) {
+    if (required) {
+      if (err) {
+        if (!parent.empty()) {
+          (*err) +=
+              "'" + property + "' property is missing in " + parent + ".\n";
+        } else {
+          (*err) += "'" + property + "' property is missing.\n";
+        }
+      }
+    }
+    return false;
+  }
+
+  // Make sure we are dealing with an object / dictionary.
+  if (!it.value().is_object()) {
+    if (required) {
+      if (err) {
+        (*err) += "'" + property + "' property is not an object.\n";
+      }
+    }
+    return false;
+  }
+
+  ret->clear();
+  const json &dict = it.value();
+
+  json::const_iterator dictIt(dict.begin());
+  json::const_iterator dictItEnd(dict.end());
+
+  for (; dictIt != dictItEnd; ++dictIt) {
+    if (!dictIt.value().is_string()) {
+      if (required) {
+        if (err) {
+          (*err) += "'" + property + "' value is not an int.\n";
+        }
+      }
+      return false;
+    }
+
+    // Insert into the list.
+    (*ret)[dictIt.key()] = dictIt.value();
+  }
+  return true;
+}
+
 static bool ParseJSONProperty(std::map<std::string, double> *ret,
                               std::string *err, const json &o,
                               const std::string &property, bool required) {
@@ -2803,8 +2885,11 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const json &o,
 static bool ParseBufferView(BufferView *bufferView, std::string *err,
                             const json &o) {
   double buffer = -1.0;
-  if (!ParseNumberProperty(&buffer, err, o, "buffer", true, "BufferView")) {
-    return false;
+  if (!ParseNumberProperty(&buffer, err, o, "buffer", false, "BufferView")) {
+    if (!ParseStringProperty(&bufferView->bName, err, o, "buffer", true,
+                             "BufferView")) {
+      return false;
+    }
   }
 
   double byteOffset = 0.0;
@@ -2909,7 +2994,9 @@ static bool ParseSparseAccessor(Accessor *accessor, std::string *err,
 
 static bool ParseAccessor(Accessor *accessor, std::string *err, const json &o) {
   double bufferView = -1.0;
-  ParseNumberProperty(&bufferView, err, o, "bufferView", false, "Accessor");
+  if (!ParseNumberProperty(&bufferView, err, o, "bufferView", false, "Accessor")) {
+    ParseStringProperty(&accessor->bvName, err, o, "bufferView", false, "Accessor");
+  }
 
   double byteOffset = 0.0;
   ParseNumberProperty(&byteOffset, err, o, "byteOffset", false, "Accessor");
@@ -3193,7 +3280,12 @@ static bool ParseDracoExtension(Primitive *primitive, Model *model,
 static bool ParsePrimitive(Primitive *primitive, Model *model, std::string *err,
                            const json &o) {
   double material = -1.0;
-  ParseNumberProperty(&material, err, o, "material", false);
+  if (!ParseNumberProperty(&material, err, o, "material", false)) {
+    std::string mName;
+    if (ParseStringProperty(&mName, err, o, "material", false)) {
+      material = model->materials1.at(mName) * 1.;
+    }
+  }
   primitive->material = static_cast<int>(material);
 
   double mode = static_cast<double>(TINYGLTF_MODE_TRIANGLES);
@@ -3203,11 +3295,23 @@ static bool ParsePrimitive(Primitive *primitive, Model *model, std::string *err,
   primitive->mode = primMode;  // Why only triangled were supported ?
 
   double indices = -1.0;
-  ParseNumberProperty(&indices, err, o, "indices", false);
+  if (!ParseNumberProperty(&indices, err, o, "indices", false)) {
+    std::string aName;
+    if (ParseStringProperty(&aName, err, o, "indices", false)) {
+      indices = model->accessors1.at(aName) * 1.;
+    }
+  }
   primitive->indices = static_cast<int>(indices);
   if (!ParseStringIntProperty(&primitive->attributes, err, o, "attributes",
-                              true, "Primitive")) {
-    return false;
+                              false, "Primitive")) {
+    std::map<std::string, std::string> nameMap;
+    if (!ParseStringMapProperty(&nameMap, err, o, "attributes",
+                                true, "Primitive")) {
+      return false;
+    }
+    for (std::pair<std::string, std::string> p : nameMap) {
+      primitive->attributes.insert({p.first, model->accessors1.at(p.second)});
+    }
   }
 
   // Look for morph targets
@@ -3717,7 +3821,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
   {
     json::const_iterator it = v.find("scenes");
-    if ((it != v.end()) && it.value().is_array()) {
+    if ((it != v.end()) && (it.value().is_array() || it.value().is_object())) {
       // OK
     } else if (check_sections & REQUIRE_SCENES) {
       if (err) {
@@ -3729,7 +3833,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
   {
     json::const_iterator it = v.find("nodes");
-    if ((it != v.end()) && it.value().is_array()) {
+    if ((it != v.end()) && (it.value().is_array() || it.value().is_object())) {
       // OK
     } else if (check_sections & REQUIRE_NODES) {
       if (err) {
@@ -3741,7 +3845,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
   {
     json::const_iterator it = v.find("accessors");
-    if ((it != v.end()) && it.value().is_array()) {
+    if ((it != v.end()) && (it.value().is_array() || it.value().is_object())) {
       // OK
     } else if (check_sections & REQUIRE_ACCESSORS) {
       if (err) {
@@ -3753,7 +3857,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
   {
     json::const_iterator it = v.find("buffers");
-    if ((it != v.end()) && it.value().is_array()) {
+    if ((it != v.end()) && (it.value().is_array() || it.value().is_object())) {
       // OK
     } else if (check_sections & REQUIRE_BUFFERS) {
       if (err) {
@@ -3765,7 +3869,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
   {
     json::const_iterator it = v.find("bufferViews");
-    if ((it != v.end()) && it.value().is_array()) {
+    if ((it != v.end()) && (it.value().is_array() || it.value().is_object())) {
       // OK
     } else if (check_sections & REQUIRE_BUFFER_VIEWS) {
       if (err) {
@@ -3820,7 +3924,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
   // 3. Parse Buffer
   {
     json::const_iterator rootIt = v.find("buffers");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -3838,6 +3942,9 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
 
+        if (root.is_object()) {
+          model->buffers1.insert({it.key(), model->buffers.size()});
+        }
         model->buffers.push_back(buffer);
       }
     }
@@ -3846,7 +3953,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
   // 4. Parse BufferView
   {
     json::const_iterator rootIt = v.find("bufferViews");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -3863,6 +3970,11 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
 
+        if (root.is_object()) {
+          bufferView.name = it.key();
+          bufferView.buffer = model->buffers1.at(bufferView.bName);
+          model->bufferViews1.insert({it.key(), model->bufferViews.size()});
+        }
         model->bufferViews.push_back(bufferView);
       }
     }
@@ -3871,7 +3983,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
   // 5. Parse Accessor
   {
     json::const_iterator rootIt = v.find("accessors");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -3888,15 +4000,52 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
 
+        if (root.is_object()) {
+          accessor.name = it.key();
+          accessor.bufferView = model->bufferViews1.at(accessor.bvName);
+          model->accessors1.insert({it.key(), model->accessors.size()});
+        }
         model->accessors.push_back(accessor);
       }
     }
   }
 
-  // 6. Parse Mesh
+  // 6. Parse Material
+  {
+    json::const_iterator rootIt = v.find("materials");
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
+      const json &root = rootIt.value();
+
+      json::const_iterator it(root.begin());
+      json::const_iterator itEnd(root.end());
+      for (; it != itEnd; it++) {
+        if (!it.value().is_object()) {
+          if (err) {
+            (*err) += "`materials' does not contain an JSON object.";
+          }
+          return false;
+        }
+        json jsonMaterial = it->get<json>();
+
+        Material material;
+        ParseStringProperty(&material.name, err, jsonMaterial, "name", false);
+
+        if (!ParseMaterial(&material, err, jsonMaterial)) {
+          return false;
+        }
+
+        if (root.is_object()) {
+          model->materials1.insert({it.key(), model->materials.size()});
+        }
+        model->materials.push_back(material);
+      }
+    }
+  }
+
+  // 7. Parse Mesh
   {
     json::const_iterator rootIt = v.find("meshes");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -3913,6 +4062,9 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
 
+        if (root.is_object()) {
+          model->meshes1.insert({it.key(), model->meshes.size()});
+        }
         model->meshes.push_back(mesh);
       }
     }
@@ -3942,10 +4094,10 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 7. Parse Node
+  // 8. Parse Node
   {
     json::const_iterator rootIt = v.find("nodes");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -3962,12 +4114,15 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
 
+        if (root.is_object()) {
+          model->nodes1.insert({it.key(), model->nodes.size()});
+        }
         model->nodes.push_back(node);
       }
     }
   }
 
-  // 8. Parse scenes.
+  // 9. Parse scenes.
   {
     json::const_iterator rootIt = v.find("scenes");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4004,42 +4159,13 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 9. Parse default scenes.
+  // 10. Parse default scenes.
   {
     json::const_iterator rootIt = v.find("scene");
     if ((rootIt != v.end()) && rootIt.value().is_number()) {
       const int defaultScene = rootIt.value();
 
       model->defaultScene = static_cast<int>(defaultScene);
-    }
-  }
-
-  // 10. Parse Material
-  {
-    json::const_iterator rootIt = v.find("materials");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
-      const json &root = rootIt.value();
-
-      json::const_iterator it(root.begin());
-      json::const_iterator itEnd(root.end());
-      for (; it != itEnd; it++) {
-        if (!it.value().is_object()) {
-          if (err) {
-            (*err) += "`materials' does not contain an JSON object.";
-          }
-          return false;
-        }
-        json jsonMaterial = it->get<json>();
-
-        Material material;
-        ParseStringProperty(&material.name, err, jsonMaterial, "name", false);
-
-        if (!ParseMaterial(&material, err, jsonMaterial)) {
-          return false;
-        }
-
-        model->materials.push_back(material);
-      }
     }
   }
 
