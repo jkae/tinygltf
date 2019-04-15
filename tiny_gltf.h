@@ -4281,7 +4281,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 12. Parse Texture
+  // 12. Parse Texture -- TODO
   {
     json::const_iterator rootIt = v.find("textures");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4306,7 +4306,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 13. Parse Animation
+  // 13. Parse Animation -- TODO
   {
     json::const_iterator rootIt = v.find("animations");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4331,7 +4331,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 14. Parse Skin
+  // 14. Parse Skin -- TODO
   {
     json::const_iterator rootIt = v.find("skins");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4356,7 +4356,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 15. Parse Sampler
+  // 15. Parse Sampler -- TODO
   {
     json::const_iterator rootIt = v.find("samplers");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4381,7 +4381,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 16. Parse Camera
+  // 16. Parse Camera -- TODO
   {
     json::const_iterator rootIt = v.find("cameras");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
@@ -4406,10 +4406,10 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 17. Parse Extensions
+  // 17. Parse Extensions -- maybe TODO?
   ParseExtensionsProperty(&model->extensions, err, v);
 
-  // 18. Specific extension implementations
+  // 18. Specific extension implementations -- maybe TODO?
   {
     json::const_iterator rootIt = v.find("extensions");
     if ((rootIt != v.end()) && rootIt.value().is_object()) {
@@ -4447,7 +4447,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 19. Parse Extras
+  // 19. Parse Extras -- maybe TODO?
   ParseExtrasProperty(&model->extras, v);
 
   return true;
