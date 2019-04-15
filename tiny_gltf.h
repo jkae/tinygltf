@@ -2144,6 +2144,16 @@ bool IsDataURI(const std::string &in) {
     return true;
   }
 
+  header = "data:,";
+  if (in.find(header) == 0) {
+    return true;
+  }
+
+  header = "data:application/octet-stream,";
+  if (in.find(header) == 0) {
+    return true;
+  }
+
   return false;
 }
 
@@ -2197,6 +2207,20 @@ bool DecodeDataURI(std::vector<unsigned char> *out, std::string &mime_type,
 
   if (data.empty()) {
     header = "data:application/gltf-buffer;base64,";
+    if (in.find(header) == 0) {
+      data = base64_decode(in.substr(header.size()));
+    }
+  }
+
+  if (data.empty()) {
+    header = "data:,";
+    if (in.find(header) == 0) {
+      data = base64_decode(in.substr(header.size()));
+    }
+  }
+
+  if (data.empty()) {
+    header = "data:application/octet-stream,";
     if (in.find(header) == 0) {
       data = base64_decode(in.substr(header.size()));
     }
@@ -4550,8 +4574,8 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
   // In case the Bin buffer is not present, the size is exactly 20 + size of
   // JSON contents,
   // so use "greater than" operator.
-  if ((20 + model_length > size) || (model_length < 1) ||
-      (model_format != 0x4E4F534A)) {  // 0x4E4F534A = JSON format.
+  if ((20 + model_length > size) || (model_length < 1) /* ||
+      (model_format != 0x4E4F534A)*/) {  // 0x4E4F534A = JSON format.
     if (err) {
       (*err) = "Invalid glTF binary.";
     }
