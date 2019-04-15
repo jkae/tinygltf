@@ -747,6 +747,9 @@ class Node {
   int skin;
   int mesh;
   std::vector<int> children;
+  std::vector<std::string> stringChildren; // Will be used to fill `children`
+  std::vector<int> meshes;          // glTF 1.0 supports multiple meshes
+  std::vector<std::string> stringMeshes; // Will be used to fill `meshes`
   std::vector<double> rotation;     // length must be 0 or 4
   std::vector<double> scale;        // length must be 0 or 3
   std::vector<double> translation;  // length must be 0 or 3
@@ -3403,6 +3406,7 @@ static bool ParseLight(Light *light, std::string *err, const json &o) {
 static bool ParseNode(Node *node, std::string *err, const json &o) {
   ParseStringProperty(&node->name, err, o, "name", false);
 
+  // TODO?
   double skin = -1.0;
   ParseNumberProperty(&skin, err, o, "skin", false);
   node->skin = static_cast<int>(skin);
@@ -3414,27 +3418,47 @@ static bool ParseNode(Node *node, std::string *err, const json &o) {
     ParseNumberArrayProperty(&node->translation, err, o, "translation", false);
   }
 
+  // TODO?
   double camera = -1.0;
   ParseNumberProperty(&camera, err, o, "camera", false);
   node->camera = static_cast<int>(camera);
 
-  double mesh = -1.0;
-  ParseNumberProperty(&mesh, err, o, "mesh", false);
-  node->mesh = int(mesh);
+  json::const_iterator meshObject = o.find("meshes");
+  if ((meshObject != o.end()) && meshObject.value().is_array()) {
+    for (json::const_iterator i = meshObject.value().begin();
+         i != meshObject.value().end(); i++) {
+      if (!i.value().is_string()) {
+        continue; // not required, no need for error
+      }
+      const std::string &meshName = i.value();
+      node->stringMeshes.push_back(meshName);
+    }
+  }
+  else {
+    double mesh = -1.0;
+    ParseNumberProperty(&mesh, err, o, "mesh", false);
+    node->mesh = int(mesh);
+  }
 
   node->children.clear();
   json::const_iterator childrenObject = o.find("children");
   if ((childrenObject != o.end()) && childrenObject.value().is_array()) {
     for (json::const_iterator i = childrenObject.value().begin();
          i != childrenObject.value().end(); i++) {
-      if (!i.value().is_number()) {
+      if (i.value().is_number()) {
+        const int &childrenNode = static_cast<int>(i.value());
+        node->children.push_back(childrenNode);
+      }
+      else if (i.value().is_string()) {
+        const std::string &nodeName = i.value();
+        node->stringChildren.push_back(nodeName);
+      }
+      else {
         if (err) {
           (*err) += "Invalid `children` array.\n";
         }
         return false;
       }
-      const int &childrenNode = static_cast<int>(i.value());
-      node->children.push_back(childrenNode);
     }
   }
 
@@ -4115,6 +4139,14 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
         }
 
         if (root.is_object()) {
+          for (const std::string &mesh : node.stringMeshes) {
+            node.meshes.push_back(model->meshes1.at(mesh));
+          }
+          node.stringMeshes.clear();
+          for (const std::string &child : node.stringChildren) {
+            node.children.push_back(model->nodes1.at(child));
+          }
+          node.stringChildren.clear();
           model->nodes1.insert({it.key(), model->nodes.size()});
         }
         model->nodes.push_back(node);
@@ -4122,10 +4154,10 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
-  // 9. Parse scenes.
+  // 9. Parse scenes. -- TODO?
   {
     json::const_iterator rootIt = v.find("scenes");
-    if ((rootIt != v.end()) && rootIt.value().is_array()) {
+    if ((rootIt != v.end()) && (rootIt.value().is_array() || rootIt.value().is_object())) {
       const json &root = rootIt.value();
 
       json::const_iterator it(root.begin());
@@ -4138,22 +4170,38 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
         const json &o = it->get<json>();
-        std::vector<double> nodes;
-        if (!ParseNumberArrayProperty(&nodes, err, o, "nodes", false)) {
-          return false;
-        }
-
         Scene scene;
         ParseStringProperty(&scene.name, err, o, "name", false);
-        std::vector<int> nodesIds;
-        for (size_t i = 0; i < nodes.size(); i++) {
-          nodesIds.push_back(static_cast<int>(nodes[i]));
+
+        json::const_iterator nodes = o.find("nodes");
+        if (nodes != o.end() && nodes.value().is_array())
+        {
+          for (json::const_iterator i = nodes.value().begin();
+               i != nodes.value().end(); i++) {
+            if (i.value().is_string()) {
+              const std::string &nodeName = i.value();
+              scene.nodes.push_back(model->nodes1.at(nodeName));
+            }
+            else if (i.value().is_number()) {
+              const int node = static_cast<int>(i.value());
+              scene.nodes.push_back(node);
+            }
+            else {
+              if (err) {
+                (*err) += "`nodes' does not contain the correct value type.";
+              }
+              return false;
+            }
+          }
         }
-        scene.nodes = nodesIds;
 
         ParseExtensionsProperty(&scene.extensions, err, o);
         ParseExtrasProperty(&scene.extras, o);
 
+        if (root.is_object()) {
+          scene.name = it.key();
+          model->scenes1.insert({it.key(), model->scenes.size()});
+        }
         model->scenes.push_back(scene);
       }
     }
@@ -4162,14 +4210,19 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
   // 10. Parse default scenes.
   {
     json::const_iterator rootIt = v.find("scene");
-    if ((rootIt != v.end()) && rootIt.value().is_number()) {
-      const int defaultScene = rootIt.value();
-
-      model->defaultScene = static_cast<int>(defaultScene);
+    if (rootIt != v.end()) {
+      if (rootIt.value().is_number()) {
+        const int defaultScene = rootIt.value();
+        model->defaultScene = static_cast<int>(defaultScene);
+      }
+      else if (rootIt.value().is_string()) {
+        const std::string &defaultScene = rootIt.value();
+        model->defaultScene = model->scenes1.at(defaultScene);
+      }
     }
   }
 
-  // 11. Parse Image
+  // 11. Parse Image -- TODO
   {
     json::const_iterator rootIt = v.find("images");
     if ((rootIt != v.end()) && rootIt.value().is_array()) {
